@@ -31,6 +31,8 @@ export class EmailAnalyzer {
       2. Explain why this label is the most appropriate choice
       3. Do not suggest new labels or use labels not in the list
       4. Consider the email's content, sender, and subject when choosing the label
+      5. Don't use quotes around your response. 
+      6. Act like a human, not a robot and respond in a way that is easy to understand and not too verbose.
 
       Also analyze the email for:
       - Appropriate action (REPLY, FORWARD, ARCHIVE, DELETE, FLAG, NONE)
