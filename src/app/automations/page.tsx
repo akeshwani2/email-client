@@ -9,6 +9,7 @@ interface AutomationRule {
   trigger: 'new_email' | 'label_added';
   action: EmailAction;
   enabled: boolean;
+  template?: string;  // Template for responses
 }
 
 export default function AutomationsPage() {
@@ -17,7 +18,15 @@ export default function AutomationsPage() {
   const [newAutomation, setNewAutomation] = useState({
     trigger: '',
     label: '',
-    action: ''
+    action: '',
+    template: `Hi {sender_name},
+
+Thank you for your email about {email_subject}.
+
+{ai_response}
+
+Best regards,
+{my_name}`
   });
   
   // Load automations from localStorage on mount
@@ -34,14 +43,27 @@ export default function AutomationsPage() {
       trigger: newAutomation.trigger as 'new_email' | 'label_added',
       label: JSON.parse(newAutomation.label),
       action: newAutomation.action as EmailAction,
-      enabled: true
+      enabled: true,
+      template: newAutomation.action === EmailAction.REPLY ? newAutomation.template : undefined
     };
     
     const updatedAutomations = [...automations, automation];
     setAutomations(updatedAutomations);
     localStorage.setItem('emailAutomations', JSON.stringify(updatedAutomations));
     setIsModalOpen(false);
-    setNewAutomation({ trigger: '', label: '', action: '' });
+    setNewAutomation({ 
+      trigger: '', 
+      label: '', 
+      action: '',
+      template: `Hi {sender_name},
+
+Thank you for your email about {email_subject}.
+
+{ai_response}
+
+Best regards,
+{my_name}`
+    });
   };
 
   const handleDeleteAutomation = (id: string) => {
@@ -103,6 +125,15 @@ export default function AutomationsPage() {
                 <h3 className="text-sm font-medium text-gray-400">Action</h3>
                 <p className="text-gray-200">{automation.action}</p>
               </div>
+
+              {automation.template && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-400">Template</h3>
+                  <pre className="text-gray-200 text-sm mt-1 whitespace-pre-wrap font-mono bg-zinc-800 p-2 rounded-lg">
+                    {automation.template}
+                  </pre>
+                </div>
+              )}
             </div>
 
             <div className="mt-6 flex gap-2">
@@ -170,6 +201,23 @@ export default function AutomationsPage() {
                   <option value={EmailAction.FLAG}>Flag</option>
                 </select>
               </div>
+
+              {newAutomation.action === EmailAction.REPLY && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-400 mb-1">
+                    Response Template
+                    <span className="block text-xs text-gray-500 mt-1">
+                      Available variables: {'{sender_name}'}, {'{email_subject}'}, {'{ai_response}'}, {'{my_name}'}
+                    </span>
+                  </label>
+                  <textarea 
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg p-2 text-white h-40 font-mono"
+                    value={newAutomation.template}
+                    onChange={(e) => setNewAutomation({...newAutomation, template: e.target.value})}
+                    placeholder="Enter your response template..."
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-3 mt-6">

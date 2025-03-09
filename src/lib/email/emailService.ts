@@ -579,10 +579,42 @@ export class EmailService {
       // Execute each matching automation
       for (const automation of matchingAutomations) {
         console.log(`Executing automation for label "${label.name}": ${automation.action}`);
+        
+        // If it's a reply action and has a template, use it to generate the response
+        if (automation.action === EmailAction.REPLY && automation.template) {
+          const response = this.processTemplate(automation.template, {
+            sender_name: this.extractNameFromEmail(email.from),
+            email_subject: email.subject,
+            ai_response: email.suggestedResponse || '',
+            my_name: account.email.split('@')[0]  // Simple name extraction, can be made configurable
+          });
+          
+          // Override the suggested response with our templated one
+          email.suggestedResponse = response;
+        }
+        
         await this.executeAction(email, automation.action, account);
       }
     } catch (error) {
       console.error('Error executing automations:', error);
     }
+  }
+
+  private processTemplate(template: string, variables: Record<string, string>): string {
+    let result = template;
+    for (const [key, value] of Object.entries(variables)) {
+      result = result.replace(new RegExp(`{${key}}`, 'g'), value);
+    }
+    return result;
+  }
+
+  private extractNameFromEmail(email: string): string {
+    // Try to extract name from format "Name <email@domain.com>"
+    const match = email.match(/^([^<]+)/);
+    if (match) {
+      return match[1].trim();
+    }
+    // Fallback to using part before @ in email
+    return email.split('@')[0];
   }
 } 
