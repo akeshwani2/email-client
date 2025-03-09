@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Email, AIResponse, EmailCategory, EmailAction, EmailImportance } from '@/types/email';
+import { Email, AIResponse, EmailCategory, EmailAction, EmailImportance, Label } from '@/types/email';
 
 export class EmailAnalyzer {
   private genAI: GoogleGenerativeAI;
@@ -10,48 +10,63 @@ export class EmailAnalyzer {
     this.model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
   }
 
-  async analyzeEmail(email: Email): Promise<AIResponse> {
+  async analyzeEmail(email: Email, availableLabels: Label[]): Promise<AIResponse> {
+    // Create a list of label names for the AI to choose from
+    const labelOptions = availableLabels.map(l => l.name).join(', ');
+    
     const prompt = `
-      Analyze this email and provide a structured response:
+      Analyze this email and categorize it appropriately:
       
       From: ${email.from}
       Subject: ${email.subject}
       Body: ${email.body}
       
-      For testing purposes, we want you to consider if this email should be labeled with "Test".
-      Since we are in testing phase, ALL emails should be marked for the "Test" label.
-      
-      Provide your response in the following format:
-      1. A brief summary
-      2. Suggested action (REPLY, FORWARD, ARCHIVE, DELETE, FLAG, NONE)
-      3. Email category (URGENT, IMPORTANT, FOLLOW_UP, NEWSLETTER, PROMOTIONAL, SPAM, OTHER)
-      4. Importance level (HIGH, MEDIUM, LOW)
-      5. Confidence score (0-1)
-      6. Should apply "Test" label (true/false) - for now, always respond with true
+      Available Labels: ${labelOptions}
+
+      Based on the email content and available labels, determine:
+      1. Which label best categorizes this email
+      2. A brief summary of why this label fits
+      3. Suggested action (REPLY, FORWARD, ARCHIVE, DELETE, FLAG, NONE)
+      4. Email category (URGENT, IMPORTANT, FOLLOW_UP, NEWSLETTER, PROMOTIONAL, SPAM, OTHER)
+      5. Importance level (HIGH, MEDIUM, LOW)
+      6. Confidence score (0-1)
       7. If action is REPLY, provide a suggested response
+
+      Provide your response in this exact format:
+      Label: [one of the available labels]
+      Reasoning: [brief explanation]
+      Action: [REPLY/FORWARD/ARCHIVE/DELETE/FLAG/NONE]
+      Category: [URGENT/IMPORTANT/FOLLOW_UP/NEWSLETTER/PROMOTIONAL/SPAM/OTHER]
+      Importance: [HIGH/MEDIUM/LOW]
+      Confidence: [0-1]
+      Response: [if action is REPLY, provide suggested response]
     `;
 
     try {
       const result = await this.model.generateContent(prompt);
       const response = result.response.text();
-      return this.parseAIResponse(response);
+      return this.parseAIResponse(response, availableLabels);
     } catch (error) {
       console.error('Error analyzing email:', error);
       throw error;
     }
   }
 
-  private parseAIResponse(response: string): AIResponse {
+  private parseAIResponse(response: string, availableLabels: Label[]): AIResponse {
     const lines = response.split('\n');
     
+    // Find the suggested label from AI's response
+    const labelLine = lines.find(l => l.startsWith('Label:'))?.split(':')[1]?.trim() || '';
+    const suggestedLabel = availableLabels.find(l => l.name === labelLine);
+    
     return {
-      summary: lines.find(l => l.includes('summary'))?.split(':')[1]?.trim() || '',
-      suggestedAction: this.parseAction(lines.find(l => l.includes('action'))),
-      category: this.parseCategory(lines.find(l => l.includes('category'))),
-      importance: this.parseImportance(lines.find(l => l.includes('importance'))),
-      confidence: this.parseConfidence(lines.find(l => l.includes('confidence'))),
-      suggestedResponse: lines.find(l => l.includes('response'))?.split(':')[1]?.trim(),
-      shouldApplyTestLabel: true  // For now, always true
+      summary: lines.find(l => l.startsWith('Reasoning:'))?.split(':')[1]?.trim() || '',
+      suggestedAction: this.parseAction(lines.find(l => l.startsWith('Action:'))),
+      category: this.parseCategory(lines.find(l => l.startsWith('Category:'))),
+      importance: this.parseImportance(lines.find(l => l.startsWith('Importance:'))),
+      confidence: this.parseConfidence(lines.find(l => l.startsWith('Confidence:'))),
+      suggestedResponse: lines.find(l => l.startsWith('Response:'))?.split(':')[1]?.trim(),
+      suggestedLabel: suggestedLabel || null
     };
   }
 

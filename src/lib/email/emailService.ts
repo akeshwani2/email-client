@@ -98,9 +98,9 @@ export class EmailService {
     console.log('Fetching message list...');
     const response = await gmail.users.messages.list({
       userId: 'me',
-      maxResults: 3,  // Reduced from 50 to 3 for testing
+      maxResults: 10,  // Just get 3 most recent emails
     });
-    console.log('Message list response:', response.data);
+    console.log(`Found ${response.data.messages?.length || 0} messages to process`);
 
     const emails: Email[] = [];
     
@@ -135,10 +135,10 @@ export class EmailService {
         labels: emailLabels
       };
 
-      // Analyze each email with AI and apply Test label
+      // Analyze email with AI and apply suggested label
       try {
         console.log('Analyzing email with AI:', email.id);
-        const analysis = await this.emailAnalyzer.analyzeEmail(email);
+        const analysis = await this.emailAnalyzer.analyzeEmail(email, allLabels);
         email.category = analysis.category;
         email.importance = analysis.importance;
         email.aiSummary = analysis.summary;
@@ -146,10 +146,15 @@ export class EmailService {
         email.suggestedResponse = analysis.suggestedResponse;
         console.log('AI analysis complete for email:', email.id);
 
-        // Apply Test label based on AI decision
-        const testLabel = await this.applyTestLabel(email, analysis, account, allLabels);
-        if (testLabel) {
-          email.labels = [...email.labels, testLabel];
+        // Apply the suggested label if one was provided
+        if (analysis.suggestedLabel?.gmailLabelId) {
+          try {
+            await this.addLabelToEmail(account, email.id, analysis.suggestedLabel.gmailLabelId);
+            console.log(`Applied ${analysis.suggestedLabel.name} label to email:`, email.id);
+            email.labels = [...email.labels, analysis.suggestedLabel];
+          } catch (error) {
+            console.error(`Failed to apply ${analysis.suggestedLabel.name} label:`, error);
+          }
         }
       } catch (error) {
         console.error('Error in AI processing for email:', email.id, error);
@@ -364,61 +369,5 @@ export class EmailService {
       '#f1f3f4': 'bg-gray-100'
     };
     return colorMap[hex.toLowerCase()] || 'bg-gray-100';
-  }
-
-  private async applyTestLabel(email: Email, analysis: AIResponse, account: EmailAccount, existingLabels: Label[]): Promise<Label | null> {
-    if (!analysis.shouldApplyTestLabel) {
-      return null;
-    }
-
-    console.log('AI suggests applying Investor Email label to email:', email.id);
-    
-    // First try to find the Test label in our existing labels
-    let testLabel = existingLabels.find(l => l.name === 'Investor Email');
-    
-    // If we don't have it cached, fetch all labels again to make sure
-    if (!testLabel) {
-      const allLabels = await this.fetchGmailLabels(account);
-      testLabel = allLabels.find(l => l.name === 'Investor Email');
-      
-      // If it still doesn't exist, create it
-      if (!testLabel) {
-        try {
-          testLabel = await this.createGmailLabel(account, {
-            id: Date.now().toString(),
-            name: 'Investor Email',
-            color: 'bg-gray-100'
-          });
-          console.log('Created Investor Email label');
-        } catch (error) {
-          // If creation failed because label exists, try fetching labels one more time
-          if (error instanceof Error && error.message.includes('exists')) {
-            const labels = await this.fetchGmailLabels(account);
-            testLabel = labels.find(l => l.name === 'Investor Email');
-            if (!testLabel) {
-              console.error('Failed to find or create Investor Email label:', error);
-              return null;
-            }
-          } else {
-            console.error('Failed to create Investor Email label:', error);
-            return null;
-          }
-        }
-      }
-    }
-
-    // Apply the Test label
-    if (testLabel?.gmailLabelId) {
-      try {
-        await this.addLabelToEmail(account, email.id, testLabel.gmailLabelId);
-        console.log('Applied Investor Email label to email:', email.id);
-        return testLabel;
-      } catch (error) {
-        console.error('Failed to apply Investor Email label:', error);
-        return null;
-      }
-    }
-
-    return null;
   }
 } 
