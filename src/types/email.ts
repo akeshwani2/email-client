@@ -46,7 +46,8 @@ export enum EmailAction {
   ARCHIVE = 'ARCHIVE',
   DELETE = 'DELETE',
   FLAG = 'FLAG',
-  NONE = 'NONE'
+  NONE = 'NONE',
+  MARK_IMPORTANT = 'MARK_IMPORTANT'
 }
 
 export interface EmailAccount {

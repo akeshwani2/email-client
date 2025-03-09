@@ -241,18 +241,27 @@ export class EmailService {
     switch (account.provider) {
       case EmailProvider.GMAIL:
         const gmail = await this.connectGmail(account);
-        const raw = this.createRawEmail(email);
-        // Create a draft instead of sending
-        await gmail.users.drafts.create({
-          userId: 'me',
-          requestBody: {
-            message: {
-              raw,
-              threadId: email.threadId
+        
+        try {
+          console.log('Creating draft response...');
+          const raw = this.createRawEmail(email);
+          
+          const draft = await gmail.users.drafts.create({
+            userId: 'me',
+            requestBody: {
+              message: {
+                raw,
+                threadId: email.threadId
+              }
             }
-          }
-        });
-        console.log('Created draft response for email from:', email.from);
+          });
+
+          console.log('Successfully created draft with ID:', draft.data.id);
+          return draft.data.id;
+        } catch (error) {
+          console.error('Failed to create draft:', error);
+          throw new Error('Failed to create email draft');
+        }
         break;
       // Implement other providers
     }
@@ -263,9 +272,11 @@ export class EmailService {
       `From: ${email.from}`,
       `To: ${email.to.join(', ')}`,
       `Subject: ${email.subject}`,
+      'Content-Type: text/plain; charset=utf-8',
+      'MIME-Version: 1.0',
       '',
-      email.body,
-    ].join('\n');
+      email.body
+    ].join('\r\n');
 
     return Buffer.from(message).toString('base64url');
   }
@@ -306,10 +317,18 @@ export class EmailService {
         throw new Error('Gmail did not return a label ID');
       }
 
-      return {
+      const newLabel = {
         ...label,
         gmailLabelId: response.data.id
       };
+
+      // Save to localStorage
+      const savedLabels = localStorage.getItem('emailLabels') || '[]';
+      const labels = JSON.parse(savedLabels);
+      labels.push(newLabel);
+      localStorage.setItem('emailLabels', JSON.stringify(labels));
+
+      return newLabel;
     } catch (error) {
       console.error('Error creating Gmail label:', error);
       if (error instanceof Error) {
@@ -481,7 +500,6 @@ export class EmailService {
     }
 
     console.log('Processing new email from:', from, 'Subject:', subject);
-    console.log('Email labels:', message.labelIds);  // Debug log
 
     const allLabels = await this.fetchGmailLabels(account);
     const labelMap = new Map(allLabels.map(label => [label.gmailLabelId!, label]));
@@ -508,10 +526,45 @@ export class EmailService {
     const systemLabels = ['INBOX', 'SENT', 'IMPORTANT', 'UNREAD', 'DRAFT', 'SPAM', 'TRASH', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'];
     const hasCustomLabel = message.labelIds?.some(labelId => !systemLabels.includes(labelId)) || false;
 
-    // Only analyze with AI if the email has no custom labels yet
-    if (!hasCustomLabel) {
+    // Only analyze if no custom labels yet
+    if (!hasCustomLabel && !this.isAutomatedEmail(email)) {
       try {
         console.log('Analyzing new email from:', from, '(ID:', email.id, ')');
+        
+        // First check for newsletter since it's a special case
+        if (this.isNewsletter(email)) {
+          const newsletterLabel = allLabels.find(label => label.name === 'Newsletter');
+          if (newsletterLabel?.gmailLabelId) {
+            await this.addLabelToEmail(account, email.id, newsletterLabel.gmailLabelId);
+            console.log('Applied "Newsletter" label');
+            email.labels = [...email.labels, newsletterLabel];
+            return; // Skip other processing for newsletters
+          }
+        }
+
+        // Check for investor email
+        if (this.isInvestorEmail(email)) {
+          const investorLabel = allLabels.find(label => label.name === 'Investor Email');
+          if (investorLabel?.gmailLabelId) {
+            await this.addLabelToEmail(account, email.id, investorLabel.gmailLabelId);
+            console.log('Applied "Investor Email" label');
+            email.labels = [...email.labels, investorLabel];
+            await this.checkAndExecuteAutomations(email, account, investorLabel);
+          }
+        }
+
+        // Check if email needs action
+        if (this.needsAction(email)) {
+          const needsActionLabel = allLabels.find(label => label.name === 'Needs Action');
+          if (needsActionLabel?.gmailLabelId) {
+            await this.addLabelToEmail(account, email.id, needsActionLabel.gmailLabelId);
+            console.log('Applied "Needs Action" label');
+            email.labels = [...email.labels, needsActionLabel];
+            await this.checkAndExecuteAutomations(email, account, needsActionLabel);
+          }
+        }
+
+        // Still get AI analysis for potential actions and responses
         const analysis = await this.emailAnalyzer.analyzeEmail(email, allLabels);
         email.category = analysis.category;
         email.importance = analysis.importance;
@@ -519,47 +572,150 @@ export class EmailService {
         email.suggestedAction = analysis.suggestedAction;
         email.suggestedResponse = analysis.suggestedResponse;
 
-        // Apply the suggested label from AI analysis
-        if (analysis.suggestedLabel?.gmailLabelId) {
+        // If AI suggests a different label, apply it
+        if (analysis.suggestedLabel?.gmailLabelId && 
+            !email.labels.some(l => l.gmailLabelId === analysis.suggestedLabel?.gmailLabelId)) {
           await this.addLabelToEmail(account, email.id, analysis.suggestedLabel.gmailLabelId);
-          console.log(`Applied ${analysis.suggestedLabel.name} label to new email from:`, from);
+          console.log(`Applied AI suggested label ${analysis.suggestedLabel.name}`);
           email.labels = [...email.labels, analysis.suggestedLabel];
-
-          // Check for automations that match this label
           await this.checkAndExecuteAutomations(email, account, analysis.suggestedLabel);
         }
 
-        // If action is needed, apply the "Needs Action" label
-        if (analysis.suggestedAction !== EmailAction.NONE) {
-          const needsActionLabel = allLabels.find(label => label.name === 'Needs Action');
-          if (needsActionLabel?.gmailLabelId) {
-            await this.addLabelToEmail(account, email.id, needsActionLabel.gmailLabelId);
-            console.log('Applied "Needs Action" label');
-            email.labels = [...email.labels, needsActionLabel];
-
-            // Check for automations that match this label
-            await this.checkAndExecuteAutomations(email, account, needsActionLabel);
-          }
-        }
-
-        // If it's an investor email, apply the "Investor Email" label
-        if (analysis.category === EmailCategory.IMPORTANT || /investor|investment|funding|venture|capital/i.test(email.subject + ' ' + email.body)) {
-          const investorLabel = allLabels.find(label => label.name === 'Investor Email');
-          if (investorLabel?.gmailLabelId) {
-            await this.addLabelToEmail(account, email.id, investorLabel.gmailLabelId);
-            console.log('Applied "Investor Email" label');
-            email.labels = [...email.labels, investorLabel];
-
-            // Check for automations that match this label
-            await this.checkAndExecuteAutomations(email, account, investorLabel);
-          }
-        }
       } catch (error) {
         console.error('Error processing new email:', error);
       }
     } else {
-      console.log('Skipping AI analysis for already labeled email from:', from);
+      console.log('Skipping analysis for already labeled or automated email from:', from);
     }
+  }
+
+  // Helper method to identify newsletters
+  private isNewsletter(email: Email): boolean {
+    const newsletterIndicators = [
+      // Common newsletter patterns in subject
+      /newsletter/i,
+      /digest/i,
+      /weekly update/i,
+      /monthly update/i,
+      
+      // Common newsletter senders
+      /no-?reply@/i,
+      /newsletter@/i,
+      /updates@/i,
+      /news@/i,
+      
+      // Common newsletter domains
+      /mailchimp.com/i,
+      /sendgrid.net/i,
+      /constantcontact.com/i,
+      
+      // Newsletter-specific headers
+      /unsubscribe/i,
+      /view in browser/i,
+      /view online/i
+    ];
+
+    // Check subject and body for newsletter indicators
+    return newsletterIndicators.some(pattern => 
+      pattern.test(email.subject) || 
+      pattern.test(email.body) ||
+      pattern.test(email.from)
+    );
+  }
+
+  // Helper method to identify investor emails
+  private isInvestorEmail(email: Email): boolean {
+    const investorIndicators = [
+      // Investment-related keywords
+      /investor/i,
+      /investment/i,
+      /funding/i,
+      /venture/i,
+      /capital/i,
+      /term sheet/i,
+      /valuation/i,
+      /cap table/i,
+      /pitch/i,
+      /portfolio/i,
+      /equity/i,
+      /shares/i,
+      /stock/i,
+      /series [a-z]/i,
+      /round/i,
+      /vc/i,
+      /venture capital/i,
+      
+      // Common VC domains
+      /sequoia/i,
+      /accel/i,
+      /benchmark/i,
+      /andreessen/i,
+      /a16z/i,
+      /firstround/i,
+      /greylock/i
+    ];
+
+    return investorIndicators.some(pattern => 
+      pattern.test(email.subject) || 
+      pattern.test(email.body) ||
+      pattern.test(email.from)
+    );
+  }
+
+  // Helper method to identify action needed emails
+  private needsAction(email: Email): boolean {
+    const actionIndicators = [
+      // Action-related keywords
+      /urgent/i,
+      /action required/i,
+      /action needed/i,
+      /please review/i,
+      /please respond/i,
+      /response needed/i,
+      /deadline/i,
+      /due by/i,
+      /approval/i,
+      /sign/i,
+      /confirm/i,
+      /verify/i,
+      /request/i,
+      /invitation/i,
+      /meeting/i,
+      /interview/i,
+      /offer/i,
+      /contract/i,
+      /agreement/i,
+      /proposal/i,
+      /question/i,
+      /feedback/i,
+      /review/i,
+      /asap/i,
+      /important/i,
+      /priority/i
+    ];
+
+    // Also check for question marks in subject or first few lines of body
+    const hasQuestion = email.subject.includes('?') || 
+                       email.body.split('\n').slice(0, 5).some(line => line.includes('?'));
+
+    return actionIndicators.some(pattern => 
+      pattern.test(email.subject) || 
+      pattern.test(email.body)
+    ) || hasQuestion;
+  }
+
+  // Helper method to identify automated emails
+  private isAutomatedEmail(email: Email): boolean {
+    const automatedIndicators = [
+      /no-?reply@/i,
+      /do-?not-?reply@/i,
+      /automated@/i,
+      /notification@/i,
+      /alert@/i,
+      /system@/i
+    ];
+
+    return automatedIndicators.some(pattern => pattern.test(email.from));
   }
 
   private async checkAndExecuteAutomations(email: Email, account: EmailAccount, label: Label) {
