@@ -12,28 +12,35 @@ export class EmailAnalyzer {
 
   async analyzeEmail(email: Email, availableLabels: Label[]): Promise<AIResponse> {
     // Create a list of label names for the AI to choose from
-    const labelOptions = availableLabels.map(l => l.name).join(', ');
+    const labelOptions = availableLabels
+      .map(l => `"${l.name}"`)  // Quote each label name for clarity
+      .join(', ');
     
     const prompt = `
-      Analyze this email and categorize it appropriately:
+      Analyze this email and categorize it into exactly one of the user's existing labels.
       
+      Email Details:
       From: ${email.from}
       Subject: ${email.subject}
       Body: ${email.body}
       
       Available Labels: ${labelOptions}
 
-      Based on the email content and available labels, determine:
-      1. Which label best categorizes this email
-      2. A brief summary of why this label fits
-      3. Suggested action (REPLY, FORWARD, ARCHIVE, DELETE, FLAG, NONE)
-      4. Email category (URGENT, IMPORTANT, FOLLOW_UP, NEWSLETTER, PROMOTIONAL, SPAM, OTHER)
-      5. Importance level (HIGH, MEDIUM, LOW)
-      6. Confidence score (0-1)
-      7. If action is REPLY, provide a suggested response
+      Instructions:
+      1. Choose exactly one label from the Available Labels list that best fits this email
+      2. Explain why this label is the most appropriate choice
+      3. Do not suggest new labels or use labels not in the list
+      4. Consider the email's content, sender, and subject when choosing the label
+
+      Also analyze the email for:
+      - Appropriate action (REPLY, FORWARD, ARCHIVE, DELETE, FLAG, NONE)
+      - Category (URGENT, IMPORTANT, FOLLOW_UP, NEWSLETTER, PROMOTIONAL, SPAM, OTHER)
+      - Importance level (HIGH, MEDIUM, LOW)
+      - Confidence in your label choice (0-1)
+      - If action is REPLY, suggest a response
 
       Provide your response in this exact format:
-      Label: [one of the available labels]
+      Label: [must be one from Available Labels]
       Reasoning: [brief explanation]
       Action: [REPLY/FORWARD/ARCHIVE/DELETE/FLAG/NONE]
       Category: [URGENT/IMPORTANT/FOLLOW_UP/NEWSLETTER/PROMOTIONAL/SPAM/OTHER]
