@@ -99,6 +99,7 @@ export class EmailService {
     const response = await gmail.users.messages.list({
       userId: 'me',
       maxResults: 10,  // Just get 3 most recent emails
+      labelIds: ['CATEGORY_PERSONAL']  // Only fetch emails from Primary category
     });
     console.log(`Found ${response.data.messages?.length || 0} messages to process`);
 
@@ -116,6 +117,15 @@ export class EmailService {
       const from = headers?.find((h: gmail_v1.Schema$MessagePartHeader) => h.name === 'From')?.value || '';
       const subject = headers?.find((h: gmail_v1.Schema$MessagePartHeader) => h.name === 'Subject')?.value || '';
       const to = headers?.find((h: gmail_v1.Schema$MessagePartHeader) => h.name === 'To')?.value?.split(',') || [];
+      
+      // Skip sent emails and non-primary category emails
+      const isInPrimary = fullMessage.data.labelIds?.includes('CATEGORY_PERSONAL') || false;
+      const isSentEmail = fullMessage.data.labelIds?.includes('SENT') || false;
+      
+      if (!isInPrimary || isSentEmail) {
+        console.log('Skipping non-primary or sent email from:', from, '(ID:', message.id, ')');
+        continue;
+      }
       
       // Map Gmail label IDs to our label objects
       const emailLabels = (fullMessage.data.labelIds || [])
@@ -135,35 +145,39 @@ export class EmailService {
         labels: emailLabels
       };
 
-      // Analyze email with AI and apply suggested label
-      try {
-        console.log('Analyzing email with AI:', email.id);
-        const analysis = await this.emailAnalyzer.analyzeEmail(email, allLabels);
-        email.category = analysis.category;
-        email.importance = analysis.importance;
-        email.aiSummary = analysis.summary;
-        email.suggestedAction = analysis.suggestedAction;
-        email.suggestedResponse = analysis.suggestedResponse;
-        console.log('AI analysis complete for email:', email.id);
+      // Only analyze with AI if the email has no labels yet
+      if (emailLabels.length === 0) {
+        try {
+          console.log('Analyzing unlabeled email from:', from, '(ID:', email.id, ')');
+          const analysis = await this.emailAnalyzer.analyzeEmail(email, allLabels);
+          email.category = analysis.category;
+          email.importance = analysis.importance;
+          email.aiSummary = analysis.summary;
+          email.suggestedAction = analysis.suggestedAction;
+          email.suggestedResponse = analysis.suggestedResponse;
+          console.log('AI analysis complete for email from:', from, '(ID:', email.id, ')');
 
-        // Apply the suggested label if one was provided
-        if (analysis.suggestedLabel?.gmailLabelId) {
-          try {
-            await this.addLabelToEmail(account, email.id, analysis.suggestedLabel.gmailLabelId);
-            console.log(`Applied ${analysis.suggestedLabel.name} label to email:`, email.id);
-            email.labels = [...email.labels, analysis.suggestedLabel];
-          } catch (error) {
-            console.error(`Failed to apply ${analysis.suggestedLabel.name} label:`, error);
+          // Apply the suggested label if one was provided
+          if (analysis.suggestedLabel?.gmailLabelId) {
+            try {
+              await this.addLabelToEmail(account, email.id, analysis.suggestedLabel.gmailLabelId);
+              console.log(`Applied ${analysis.suggestedLabel.name} label to email from:`, from, '(ID:', email.id, ')');
+              email.labels = [...email.labels, analysis.suggestedLabel];
+            } catch (error) {
+              console.error(`Failed to apply ${analysis.suggestedLabel.name} label to email from:`, from, '(ID:', email.id, ')', error);
+            }
           }
+        } catch (error) {
+          console.error('Error in AI processing for email from:', from, '(ID:', email.id, ')', error);
         }
-      } catch (error) {
-        console.error('Error in AI processing for email:', email.id, error);
+      } else {
+        console.log('Skipping AI analysis for already labeled email from:', from, '(ID:', email.id, ')');
       }
 
       emails.push(email);
     }
 
-    console.log('Returning emails:', emails.length);
+    console.log('Returning', emails.length, 'emails');
     return emails;
   }
 
