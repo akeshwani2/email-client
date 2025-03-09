@@ -524,6 +524,9 @@ export class EmailService {
           await this.addLabelToEmail(account, email.id, analysis.suggestedLabel.gmailLabelId);
           console.log(`Applied ${analysis.suggestedLabel.name} label to new email from:`, from);
           email.labels = [...email.labels, analysis.suggestedLabel];
+
+          // Check for automations that match this label
+          await this.checkAndExecuteAutomations(email, account, analysis.suggestedLabel);
         }
 
         // If action is needed, apply the "Needs Action" label
@@ -533,6 +536,9 @@ export class EmailService {
             await this.addLabelToEmail(account, email.id, needsActionLabel.gmailLabelId);
             console.log('Applied "Needs Action" label');
             email.labels = [...email.labels, needsActionLabel];
+
+            // Check for automations that match this label
+            await this.checkAndExecuteAutomations(email, account, needsActionLabel);
           }
         }
 
@@ -543,18 +549,40 @@ export class EmailService {
             await this.addLabelToEmail(account, email.id, investorLabel.gmailLabelId);
             console.log('Applied "Investor Email" label');
             email.labels = [...email.labels, investorLabel];
-          }
-        }
 
-        // Execute any suggested actions
-        if (analysis.suggestedAction) {
-          await this.executeAction(email, analysis.suggestedAction, account);
+            // Check for automations that match this label
+            await this.checkAndExecuteAutomations(email, account, investorLabel);
+          }
         }
       } catch (error) {
         console.error('Error processing new email:', error);
       }
     } else {
       console.log('Skipping AI analysis for already labeled email from:', from);
+    }
+  }
+
+  private async checkAndExecuteAutomations(email: Email, account: EmailAccount, label: Label) {
+    try {
+      // Get automations from localStorage
+      const savedAutomations = typeof window !== 'undefined' ? localStorage.getItem('emailAutomations') : null;
+      if (!savedAutomations) return;
+
+      const automations = JSON.parse(savedAutomations);
+      
+      // Find matching automations for this label
+      const matchingAutomations = automations.filter((automation: any) => 
+        automation.enabled && 
+        automation.label.name === label.name
+      );
+
+      // Execute each matching automation
+      for (const automation of matchingAutomations) {
+        console.log(`Executing automation for label "${label.name}": ${automation.action}`);
+        await this.executeAction(email, automation.action, account);
+      }
+    } catch (error) {
+      console.error('Error executing automations:', error);
     }
   }
 } 
