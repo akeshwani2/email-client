@@ -33,7 +33,7 @@ export default function EmailDashboard() {
         if (!emailResponse.ok) {
           throw new Error(`Failed to fetch emails: ${emailResponse.status}`);
         }
-        const emailData = await emailResponse.json();
+        const { emails: emailData } = await emailResponse.json();
         setEmails(emailData);
 
         // Fetch labels

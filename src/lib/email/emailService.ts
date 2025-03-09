@@ -1,5 +1,5 @@
 import { google } from 'googleapis';
-import { EmailAccount, Email, EmailProvider, EmailAction, EmailImportance, Label } from '@/types/email';
+import { EmailAccount, Email, EmailProvider, EmailAction, EmailImportance, Label, AIResponse } from '@/types/email';
 import nodemailer from 'nodemailer';
 import { EmailAnalyzer } from '../ai/emailAnalyzer';
 import { gmail_v1 } from 'googleapis';
@@ -135,20 +135,24 @@ export class EmailService {
         labels: emailLabels
       };
 
-      // Only analyze the first email with AI
-      if (emails.length === 0) {
-        try {
-          console.log('Analyzing first email with AI...');
-          const analysis = await this.emailAnalyzer.analyzeEmail(email);
-          email.category = analysis.category;
-          email.importance = analysis.importance;
-          email.aiSummary = analysis.summary;
-          email.suggestedAction = analysis.suggestedAction;
-          email.suggestedResponse = analysis.suggestedResponse;
-          console.log('AI analysis complete');
-        } catch (error) {
-          console.error('Error analyzing email:', error);
+      // Analyze each email with AI and apply Test label
+      try {
+        console.log('Analyzing email with AI:', email.id);
+        const analysis = await this.emailAnalyzer.analyzeEmail(email);
+        email.category = analysis.category;
+        email.importance = analysis.importance;
+        email.aiSummary = analysis.summary;
+        email.suggestedAction = analysis.suggestedAction;
+        email.suggestedResponse = analysis.suggestedResponse;
+        console.log('AI analysis complete for email:', email.id);
+
+        // Apply Test label based on AI decision
+        const testLabel = await this.applyTestLabel(email, analysis, account, allLabels);
+        if (testLabel) {
+          email.labels = [...email.labels, testLabel];
         }
+      } catch (error) {
+        console.error('Error in AI processing for email:', email.id, error);
       }
 
       emails.push(email);
@@ -360,5 +364,61 @@ export class EmailService {
       '#f1f3f4': 'bg-gray-100'
     };
     return colorMap[hex.toLowerCase()] || 'bg-gray-100';
+  }
+
+  private async applyTestLabel(email: Email, analysis: AIResponse, account: EmailAccount, existingLabels: Label[]): Promise<Label | null> {
+    if (!analysis.shouldApplyTestLabel) {
+      return null;
+    }
+
+    console.log('AI suggests applying Investor Email label to email:', email.id);
+    
+    // First try to find the Test label in our existing labels
+    let testLabel = existingLabels.find(l => l.name === 'Investor Email');
+    
+    // If we don't have it cached, fetch all labels again to make sure
+    if (!testLabel) {
+      const allLabels = await this.fetchGmailLabels(account);
+      testLabel = allLabels.find(l => l.name === 'Investor Email');
+      
+      // If it still doesn't exist, create it
+      if (!testLabel) {
+        try {
+          testLabel = await this.createGmailLabel(account, {
+            id: Date.now().toString(),
+            name: 'Investor Email',
+            color: 'bg-gray-100'
+          });
+          console.log('Created Investor Email label');
+        } catch (error) {
+          // If creation failed because label exists, try fetching labels one more time
+          if (error instanceof Error && error.message.includes('exists')) {
+            const labels = await this.fetchGmailLabels(account);
+            testLabel = labels.find(l => l.name === 'Investor Email');
+            if (!testLabel) {
+              console.error('Failed to find or create Investor Email label:', error);
+              return null;
+            }
+          } else {
+            console.error('Failed to create Investor Email label:', error);
+            return null;
+          }
+        }
+      }
+    }
+
+    // Apply the Test label
+    if (testLabel?.gmailLabelId) {
+      try {
+        await this.addLabelToEmail(account, email.id, testLabel.gmailLabelId);
+        console.log('Applied Investor Email label to email:', email.id);
+        return testLabel;
+      } catch (error) {
+        console.error('Failed to apply Investor Email label:', error);
+        return null;
+      }
+    }
+
+    return null;
   }
 } 

@@ -1,11 +1,13 @@
-import { OpenAI } from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Email, AIResponse, EmailCategory, EmailAction, EmailImportance } from '@/types/email';
 
 export class EmailAnalyzer {
-  private openai: OpenAI;
+  private genAI: GoogleGenerativeAI;
+  private model: any;
   
   constructor(apiKey: string) {
-    this.openai = new OpenAI({ apiKey });
+    this.genAI = new GoogleGenerativeAI(apiKey);
+    this.model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
   }
 
   async analyzeEmail(email: Email): Promise<AIResponse> {
@@ -16,32 +18,22 @@ export class EmailAnalyzer {
       Subject: ${email.subject}
       Body: ${email.body}
       
-      Provide:
+      For testing purposes, we want you to consider if this email should be labeled with "Test".
+      Since we are in testing phase, ALL emails should be marked for the "Test" label.
+      
+      Provide your response in the following format:
       1. A brief summary
       2. Suggested action (REPLY, FORWARD, ARCHIVE, DELETE, FLAG, NONE)
       3. Email category (URGENT, IMPORTANT, FOLLOW_UP, NEWSLETTER, PROMOTIONAL, SPAM, OTHER)
       4. Importance level (HIGH, MEDIUM, LOW)
       5. Confidence score (0-1)
-      6. If action is REPLY, provide a suggested response
+      6. Should apply "Test" label (true/false) - for now, always respond with true
+      7. If action is REPLY, provide a suggested response
     `;
 
     try {
-      const completion = await this.openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: "You are an AI email assistant that helps analyze emails and suggest appropriate actions. Be concise and professional."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        temperature: 0.7,
-      });
-
-      const response = completion.choices[0].message.content || '';
+      const result = await this.model.generateContent(prompt);
+      const response = result.response.text();
       return this.parseAIResponse(response);
     } catch (error) {
       console.error('Error analyzing email:', error);
@@ -50,7 +42,6 @@ export class EmailAnalyzer {
   }
 
   private parseAIResponse(response: string): AIResponse {
-    // This is a simple parser - you might want to make it more robust
     const lines = response.split('\n');
     
     return {
@@ -60,6 +51,7 @@ export class EmailAnalyzer {
       importance: this.parseImportance(lines.find(l => l.includes('importance'))),
       confidence: this.parseConfidence(lines.find(l => l.includes('confidence'))),
       suggestedResponse: lines.find(l => l.includes('response'))?.split(':')[1]?.trim(),
+      shouldApplyTestLabel: true  // For now, always true
     };
   }
 

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@google-cloud/vertexai": "^1.9.3",
+    "@google/generative-ai": "^0.24.0",
     "@prisma/client": "^6.4.1",
     "@types/nodemailer": "^6.4.17",
     "googleapis": "^146.0.0",

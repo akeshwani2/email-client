@@ -70,4 +70,5 @@ export interface AIResponse {
   category: EmailCategory;
   importance: EmailImportance;
   confidence: number;
+  shouldApplyTestLabel: boolean;  // New field for test label application
 } 
