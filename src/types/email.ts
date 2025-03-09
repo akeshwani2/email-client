@@ -7,6 +7,7 @@ export interface Label {
 
 export interface Email {
   id: string;
+  threadId: string;  // Add this for tracking email threads
   from: string;
   to: string[];
   subject: string;
