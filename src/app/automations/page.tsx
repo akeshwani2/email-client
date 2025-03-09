@@ -26,14 +26,41 @@ Thank you for your email about {email_subject}.
 Best regards,
 {my_name}`);
 
-  // Load automations and labels from localStorage on mount
+  // Load automations and labels from localStorage and sync with server
   useEffect(() => {
-    const savedAutomations = localStorage.getItem('emailAutomations');
-    if (savedAutomations) {
-      setAutomations(JSON.parse(savedAutomations));
-    }
+    const loadAutomations = async () => {
+      try {
+        // First try to get automations from server
+        const response = await fetch('/api/automations');
+        const data = await response.json();
+        
+        if (data.automations && data.automations.length > 0) {
+          console.log('Loaded automations from server:', data.automations);
+          setAutomations(data.automations);
+          localStorage.setItem('emailAutomations', JSON.stringify(data.automations));
+        } else {
+          // If no server automations, try localStorage
+          const savedAutomations = localStorage.getItem('emailAutomations');
+          if (savedAutomations) {
+            const automations = JSON.parse(savedAutomations);
+            setAutomations(automations);
+            // Sync with server
+            await fetch('/api/automations', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(automations)
+            });
+            console.log('Synced localStorage automations to server:', automations);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading automations:', error);
+      }
+    };
 
-    // Load labels from localStorage or set defaults if none exist
+    loadAutomations();
+
+    // Load labels from localStorage
     const savedLabels = localStorage.getItem('emailLabels');
     if (savedLabels) {
       setAvailableLabels(JSON.parse(savedLabels));
@@ -70,7 +97,7 @@ Best regards,
     setIsActionModalOpen(true);
   };
 
-  const handleCreateAutomation = () => {
+  const handleCreateAutomation = async () => {
     if (!selectedLabel || !selectedAction) return;
 
     const automation: AutomationRule = {
@@ -83,17 +110,24 @@ Best regards,
     
     // Remove any existing automation for this label
     const filteredAutomations = automations.filter(a => a.label.id !== selectedLabel.id);
-    
     const updatedAutomations = [...filteredAutomations, automation];
+    
     setAutomations(updatedAutomations);
     localStorage.setItem('emailAutomations', JSON.stringify(updatedAutomations));
+    
+    // Sync with server
+    await fetch('/api/automations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedAutomations)
+    });
     
     setIsActionModalOpen(false);
     setSelectedLabel(null);
     setSelectedAction('');
   };
 
-  const handleToggleAutomation = (id: string) => {
+  const handleToggleAutomation = async (id: string) => {
     const updatedAutomations = automations.map(automation => 
       automation.id === id 
         ? { ...automation, enabled: !automation.enabled }
@@ -101,12 +135,26 @@ Best regards,
     );
     setAutomations(updatedAutomations);
     localStorage.setItem('emailAutomations', JSON.stringify(updatedAutomations));
+    
+    // Sync with server
+    await fetch('/api/automations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedAutomations)
+    });
   };
 
-  const handleDeleteAutomation = (id: string) => {
+  const handleDeleteAutomation = async (id: string) => {
     const updatedAutomations = automations.filter(a => a.id !== id);
     setAutomations(updatedAutomations);
     localStorage.setItem('emailAutomations', JSON.stringify(updatedAutomations));
+    
+    // Sync with server
+    await fetch('/api/automations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedAutomations)
+    });
   };
 
   return (

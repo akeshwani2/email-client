@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { EmailService } from '@/lib/email/emailService';
 import { EmailProvider, Label } from '@/types/email';
 
-const emailService = new EmailService(process.env.OPENAI_API_KEY || '');
+const emailService = new EmailService(process.env.GEMINI_API_KEY || '');
 
 // Get all labels
 export async function GET() {

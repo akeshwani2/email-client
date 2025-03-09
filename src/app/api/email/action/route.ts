@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { EmailService } from '@/lib/email/emailService';
-import { EmailAction, EmailProvider } from '@/types/email';
+import { EmailAction, EmailProvider, Email } from '@/types/email';
 
-const emailService = new EmailService(process.env.OPENAI_API_KEY || '');
+const emailService = new EmailService(process.env.GEMINI_API_KEY || '');
 
 export async function POST(request: Request) {
   try {
-    const { emailId, action } = await request.json();
+    const { email, action } = await request.json();
 
     // Get the user's email account from the session
     // This is a placeholder - you'll need to implement proper auth
@@ -19,9 +19,9 @@ export async function POST(request: Request) {
       connected: true,
     };
 
-    // Execute the action
+    // Execute the action with complete email object
     await emailService.executeAction(
-      { id: emailId } as any, // You'll need to fetch the full email object
+      email as Email,
       action as EmailAction,
       account
     );

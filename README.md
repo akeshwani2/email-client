@@ -44,7 +44,7 @@ Create a `.env.local` file in the root directory with the following variables:
 
 ```env
 # OpenAI
-OPENAI_API_KEY=your_openai_api_key
+_API_KEY=your_openai_api_key
 
 # Google OAuth
 GOOGLE_CLIENT_ID=your_google_client_id

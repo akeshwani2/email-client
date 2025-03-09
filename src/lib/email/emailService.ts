@@ -1,5 +1,5 @@
 import { google } from 'googleapis';
-import { EmailAccount, Email, EmailProvider, EmailAction, EmailImportance, Label, AIResponse, EmailCategory } from '@/types/email';
+import { EmailAccount, Email, EmailProvider, EmailAction, EmailImportance, Label, AIResponse, EmailCategory, AutomationRule } from '@/types/email';
 import nodemailer from 'nodemailer';
 import { EmailAnalyzer } from '../ai/emailAnalyzer';
 import { gmail_v1 } from 'googleapis';
@@ -9,6 +9,7 @@ export class EmailService {
   private historyId: string | null = null;
   private lastCheckTime: Date | null = null;
   private processedEmails: Set<string> = new Set();
+  private automationStore: AutomationRule[] = [];
   
   constructor(aiApiKey: string) {
     this.emailAnalyzer = new EmailAnalyzer(aiApiKey);
@@ -214,26 +215,41 @@ export class EmailService {
   }
 
   async executeAction(email: Email, action: EmailAction, account: EmailAccount) {
+    console.log('Executing action:', action, 'for email:', email.subject);
+    
     switch (action) {
       case EmailAction.REPLY:
         if (email.suggestedResponse) {
-          await this.sendEmail({
+          const draftId = await this.sendEmail({
             from: account.email,
             to: [email.from],
             subject: `Re: ${email.subject}`,
             body: email.suggestedResponse,
             threadId: email.threadId
           }, account);
-          console.log('Created draft reply for:', email.subject);
+          console.log('Created draft reply with ID:', draftId);
         }
         break;
+
+      case EmailAction.MARK_IMPORTANT:
+        const gmail = await this.connectGmail(account);
+        await gmail.users.messages.modify({
+          userId: 'me',
+          id: email.id,
+          requestBody: {
+            addLabelIds: ['IMPORTANT']
+          }
+        });
+        console.log('Marked email as important:', email.subject);
+        break;
+
       case EmailAction.ARCHIVE:
         await this.archiveEmail(email, account);
         break;
+
       case EmailAction.DELETE:
         await this.deleteEmail(email, account);
         break;
-      // Implement other actions
     }
   }
 
@@ -531,17 +547,16 @@ export class EmailService {
       try {
         console.log('Analyzing new email from:', from, '(ID:', email.id, ')');
         
-        // First check for newsletter since it's a special case
-        if (this.isNewsletter(email)) {
-          const newsletterLabel = allLabels.find(label => label.name === 'Newsletter');
-          if (newsletterLabel?.gmailLabelId) {
-            await this.addLabelToEmail(account, email.id, newsletterLabel.gmailLabelId);
-            console.log('Applied "Newsletter" label');
-            email.labels = [...email.labels, newsletterLabel];
-            return; // Skip other processing for newsletters
-          }
-        }
+        // Get AI analysis first for potential actions and responses
+        const analysis = await this.emailAnalyzer.analyzeEmail(email, allLabels);
+        email.category = analysis.category;
+        email.importance = analysis.importance;
+        email.aiSummary = analysis.summary;
+        email.suggestedAction = analysis.suggestedAction;
+        email.suggestedResponse = analysis.suggestedResponse;
 
+        let shouldCreateDraft = false;
+        
         // Check for investor email
         if (this.isInvestorEmail(email)) {
           const investorLabel = allLabels.find(label => label.name === 'Investor Email');
@@ -549,7 +564,7 @@ export class EmailService {
             await this.addLabelToEmail(account, email.id, investorLabel.gmailLabelId);
             console.log('Applied "Investor Email" label');
             email.labels = [...email.labels, investorLabel];
-            await this.checkAndExecuteAutomations(email, account, investorLabel);
+            shouldCreateDraft = true;
           }
         }
 
@@ -560,17 +575,21 @@ export class EmailService {
             await this.addLabelToEmail(account, email.id, needsActionLabel.gmailLabelId);
             console.log('Applied "Needs Action" label');
             email.labels = [...email.labels, needsActionLabel];
-            await this.checkAndExecuteAutomations(email, account, needsActionLabel);
+            shouldCreateDraft = true;
           }
         }
 
-        // Still get AI analysis for potential actions and responses
-        const analysis = await this.emailAnalyzer.analyzeEmail(email, allLabels);
-        email.category = analysis.category;
-        email.importance = analysis.importance;
-        email.aiSummary = analysis.summary;
-        email.suggestedAction = analysis.suggestedAction;
-        email.suggestedResponse = analysis.suggestedResponse;
+        // Create draft reply if needed
+        if (shouldCreateDraft && analysis.suggestedResponse) {
+          const draftId = await this.sendEmail({
+            from: account.email,
+            to: [email.from],
+            subject: `Re: ${email.subject}`,
+            body: analysis.suggestedResponse,
+            threadId: email.threadId
+          }, account);
+          console.log('Created auto-reply draft:', draftId);
+        }
 
         // If AI suggests a different label, apply it
         if (analysis.suggestedLabel?.gmailLabelId && 
@@ -718,52 +737,87 @@ export class EmailService {
     return automatedIndicators.some(pattern => pattern.test(email.from));
   }
 
+  // Add method to update automations
+  setAutomations(automations: AutomationRule[]) {
+    this.automationStore = automations;
+    console.log('Updated automation store:', this.automationStore);
+  }
+
+  // Add method to get automations
+  getAutomations(): AutomationRule[] {
+    return this.automationStore;
+  }
+
   private async checkAndExecuteAutomations(email: Email, account: EmailAccount, label: Label) {
     try {
-      // Get automations from localStorage
-      const savedAutomations = typeof window !== 'undefined' ? localStorage.getItem('emailAutomations') : null;
-      if (!savedAutomations) return;
-
-      const automations = JSON.parse(savedAutomations);
+      // Log current automations for debugging
+      console.log('Current automation store:', this.automationStore);
       
-      // Find matching automations for this label
-      const matchingAutomations = automations.filter((automation: any) => 
-        automation.enabled && 
-        automation.label.name === label.name
+      // Find matching automation for this label from memory store
+      const automation = this.automationStore.find(a => 
+        a.enabled && 
+        a.label.id === label.id
       );
 
-      // Execute each matching automation
-      for (const automation of matchingAutomations) {
-        console.log(`Executing automation for label "${label.name}": ${automation.action}`);
-        
-        // If it's a reply action and has a template, use it to generate the response
-        if (automation.action === EmailAction.REPLY && automation.template) {
-          const response = this.processTemplate(automation.template, {
-            sender_name: this.extractNameFromEmail(email.from),
-            email_subject: email.subject,
-            ai_response: email.suggestedResponse || '',
-            my_name: account.email.split('@')[0]  // Simple name extraction, can be made configurable
+      if (!automation) {
+        console.log('No automation found for label:', label.name, 'Label ID:', label.id);
+        console.log('Available automations:', this.automationStore);
+        return;
+      }
+
+      console.log(`Executing automation for label "${label.name}": ${automation.action}`);
+      
+      switch (automation.action) {
+        case EmailAction.REPLY:
+          if (automation.template) {
+            const response = this.processTemplate(automation.template, {
+              sender_name: this.extractNameFromEmail(email.from),
+              email_subject: email.subject,
+              ai_response: email.suggestedResponse || '',
+              my_name: account.email.split('@')[0]
+            });
+            
+            // Create the draft reply
+            const draftId = await this.sendEmail({
+              from: account.email,
+              to: [email.from],
+              subject: `Re: ${email.subject}`,
+              body: response,
+              threadId: email.threadId
+            }, account);
+            
+            console.log('Created automated draft reply with ID:', draftId, 'for:', email.subject);
+          }
+          break;
+
+        case EmailAction.MARK_IMPORTANT:
+          // Mark the email as important in Gmail
+          const gmail = await this.connectGmail(account);
+          await gmail.users.messages.modify({
+            userId: 'me',
+            id: email.id,
+            requestBody: {
+              addLabelIds: ['IMPORTANT']
+            }
           });
-          
-          // Override the suggested response with our templated one
-          email.suggestedResponse = response;
-        }
-        
-        await this.executeAction(email, automation.action, account);
+          console.log('Marked email as important:', email.subject);
+          break;
       }
     } catch (error) {
-      console.error('Error executing automations:', error);
+      console.error('Error executing automation:', error);
     }
   }
 
+  // Helper method to process template variables
   private processTemplate(template: string, variables: Record<string, string>): string {
     let result = template;
     for (const [key, value] of Object.entries(variables)) {
-      result = result.replace(new RegExp(`{${key}}`, 'g'), value);
+      result = result.replace(new RegExp(`{${key}}`, 'g'), value || '');
     }
     return result;
   }
 
+  // Helper method to extract name from email address
   private extractNameFromEmail(email: string): string {
     // Try to extract name from format "Name <email@domain.com>"
     const match = email.match(/^([^<]+)/);

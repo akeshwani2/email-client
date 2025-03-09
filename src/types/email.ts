@@ -73,4 +73,12 @@ export interface AIResponse {
   importance: EmailImportance;
   confidence: number;
   suggestedLabel: Label | null;  // New field for AI's label suggestion
+}
+
+export interface AutomationRule {
+  id: string;
+  label: Label;
+  action: EmailAction;
+  enabled: boolean;
+  template?: string;
 } 
