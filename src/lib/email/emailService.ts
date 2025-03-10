@@ -77,7 +77,7 @@ export class EmailService {
     throw new Error('IMAP connection not implemented yet');
   }
 
-  async fetchEmails(account: EmailAccount, maxResults: number = 50): Promise<Email[]> {
+  async fetchEmails(account: EmailAccount, maxResults: number = 10): Promise<Email[]> {
     switch (account.provider) {
       case EmailProvider.GMAIL:
         return this.fetchGmailEmails(account, maxResults);
@@ -102,8 +102,8 @@ export class EmailService {
     console.log('Fetching message list...');
     const response = await gmail.users.messages.list({
       userId: 'me',
-      maxResults: 10,  // Just get 3 most recent emails
-      labelIds: ['CATEGORY_PERSONAL']  // Only fetch emails from Primary category
+      maxResults: 10,
+      q: 'in:inbox category:primary newer_than:1d'  // Get newer emails from last day
     });
     console.log(`Found ${response.data.messages?.length || 0} messages to process`);
 
@@ -461,26 +461,27 @@ export class EmailService {
     const gmail = await this.connectGmail(account);
     
     try {
-      // Get all unprocessed primary emails from the last hour
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-      const query = `in:inbox category:primary after:${Math.floor(oneHourAgo.getTime() / 1000)}`;
+      // Remove the time restriction to get all unprocessed emails
+      const query = 'in:inbox category:primary';  // Simplified query to get all primary inbox emails
       
       console.log('Checking for new emails with query:', query);
 
       const response = await gmail.users.messages.list({
         userId: 'me',
-        q: query,
-        maxResults: 50  // Increased to handle more emails
+        maxResults: 10,
+        q: 'in:inbox category:primary newer_than:1d'  // Get newer emails from last day
       });
 
-      if (!response.data.messages?.length) {
+      const messages = (await response).data.messages || [];
+
+      if (!messages.length) {
         console.log('No new messages found');
         return;
       }
 
-      console.log(`Found ${response.data.messages.length} messages to check`);
+      console.log(`Found ${messages.length} messages to check`);
 
-      for (const message of response.data.messages) {
+      for (const message of messages) {
         const fullMessage = await gmail.users.messages.get({
           userId: 'me',
           id: message.id!,
@@ -539,8 +540,26 @@ export class EmailService {
     };
 
     // Check if email has any of our custom labels (ignore Gmail's system labels)
-    const systemLabels = ['INBOX', 'SENT', 'IMPORTANT', 'UNREAD', 'DRAFT', 'SPAM', 'TRASH', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'];
-    const hasCustomLabel = message.labelIds?.some(labelId => !systemLabels.includes(labelId)) || false;
+    const systemLabels = [
+      'INBOX', 
+      'SENT', 
+      'IMPORTANT', 
+      'UNREAD', 
+      'DRAFT', 
+      'SPAM', 
+      'TRASH', 
+      'CATEGORY_PERSONAL', 
+      'CATEGORY_SOCIAL', 
+      'CATEGORY_PROMOTIONS', 
+      'CATEGORY_UPDATES', 
+      'CATEGORY_FORUMS',
+      'Label_19'  // Add any other system labels you want to ignore
+    ];
+    
+    const hasCustomLabel = message.labelIds?.some(labelId => 
+      !systemLabels.includes(labelId) && 
+      !labelId.startsWith('Label_')  // Ignore Gmail's auto-generated labels
+    ) || false;
 
     // Only analyze if no custom labels yet
     if (!hasCustomLabel && !this.isAutomatedEmail(email)) {
@@ -565,6 +584,17 @@ export class EmailService {
             console.log('Applied "Investor Email" label');
             email.labels = [...email.labels, investorLabel];
             shouldCreateDraft = true;
+          }
+        }
+
+        // Check if email is a bank email
+        if (this.isBankEmail(email)) {
+          const bankLabel = allLabels.find(label => label.name === 'Bank Email');
+          if (bankLabel?.gmailLabelId) {
+            await this.addLabelToEmail(account, email.id, bankLabel.gmailLabelId);
+            console.log('Applied "Bank Email" label');
+            email.labels = [...email.labels, bankLabel];
+            shouldCreateDraft = false;
           }
         }
 
@@ -736,6 +766,26 @@ export class EmailService {
 
     return automatedIndicators.some(pattern => pattern.test(email.from));
   }
+
+    // Helper method to identify bank emails
+    private isBankEmail(email: Email): boolean {
+      const bankIndicators = [
+        /no-?reply@/i,
+        /do-?not-?reply@/i,
+        /automated@/i,
+        /notification@/i,
+        /alert@/i,
+        /system@/i,
+        /bank/i,
+        /credit/i,
+        /loan/i,
+        /account/i,
+        /statement/i,
+        
+      ];
+  
+      return bankIndicators.some(pattern => pattern.test(email.from));
+    }
 
   // Add method to update automations
   setAutomations(automations: AutomationRule[]) {
