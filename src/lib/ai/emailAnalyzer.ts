@@ -4,10 +4,12 @@ import { Email, AIResponse, EmailCategory, EmailAction, EmailImportance, Label }
 export class EmailAnalyzer {
   private genAI: GoogleGenerativeAI;
   private model: any;
+  private apiKey: string;
   
   constructor(apiKey: string) {
+    this.apiKey = apiKey;
     this.genAI = new GoogleGenerativeAI(apiKey);
-    this.model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    this.model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
   }
 
   async analyzeEmail(email: Email, availableLabels: Label[]): Promise<AIResponse> {
@@ -111,5 +113,83 @@ export class EmailAnalyzer {
     if (!line) return 0;
     const match = line.match(/\d+(\.\d+)?/);
     return match ? parseFloat(match[0]) : 0;
+  }
+
+  /**
+   * Generates a complete response for investor emails
+   */
+  async generateInvestorResponse(email: Email): Promise<string> {
+    try {
+      const prompt = `
+You are a professional startup founder responding to a potential investor.
+The email you received is:
+
+From: ${email.from}
+Subject: ${email.subject}
+Body: ${email.body}
+
+Write a complete, professional response that:
+1. Thanks them for their interest
+2. Provides a brief overview of your company's current status
+3. Expresses interest in further discussion
+4. Suggests next steps (like a call or meeting)
+5. Includes a proper greeting and sign-off
+6. Is friendly but professional in tone
+
+Your response should be ready to send with minimal or no editing.
+`;
+
+      const response = await this.callAI(prompt);
+      
+      // Ensure we have a complete response
+      if (!response || !response.trim()) {
+        return this.getFallbackInvestorResponse(email);
+      }
+      
+      return response;
+    } catch (error) {
+      console.error('Error generating investor response:', error);
+      return this.getFallbackInvestorResponse(email);
+    }
+  }
+
+  /**
+   * Provides a fallback response if AI generation fails
+   */
+  private getFallbackInvestorResponse(email: Email): string {
+    const senderName = this.extractNameFromEmail(email.from);
+    return `Dear ${senderName},
+
+Thank you for your interest in our company. I'd be happy to discuss potential investment opportunities.
+
+Could we schedule a call next week to discuss this further?
+
+Best regards,
+[Your Name]`;
+  }
+
+  /**
+   * Extract name from email address
+   */
+  private extractNameFromEmail(email: string): string {
+    const nameMatch = email.match(/^([^<]+)</);
+    if (nameMatch && nameMatch[1].trim()) {
+      return nameMatch[1].trim();
+    }
+    return 'there';
+  }
+
+  /**
+   * Makes the actual API call to the Gemini AI service using the SDK
+   */
+  private async callAI(prompt: string): Promise<string> {
+    try {
+      const result = await this.model.generateContent(prompt);
+      const response = result.response;
+      return response.text();
+    } catch (error) {
+      console.error('Error calling Gemini AI service:', error);
+      throw error;
+    }
   }
 } 

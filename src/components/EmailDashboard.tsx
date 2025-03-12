@@ -4,6 +4,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { Email, EmailAction, EmailCategory, Label } from '@/types/email';
 
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  emailData?: Email | Email[];
+}
+
 export default function EmailDashboard() {
   const [emails, setEmails] = useState<Email[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
@@ -19,6 +26,9 @@ export default function EmailDashboard() {
   const [showLabelInput, setShowLabelInput] = useState(false);
   const [labelError, setLabelError] = useState<string | null>(null);
   const [isCreatingLabel, setIsCreatingLabel] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (fetchedRef.current) return;
@@ -42,6 +52,13 @@ export default function EmailDashboard() {
           const labelData = await labelResponse.json();
           setLabels(labelData);
         }
+
+        // Add initial AI message
+        setMessages([{
+          role: 'assistant',
+          content: 'Hello! I\'m your email assistant. I can help you manage your emails and labels. What would you like to do?',
+          timestamp: new Date()
+        }]);
       } catch (error) {
         console.error('Error in fetchData:', error);
         setError(error instanceof Error ? error.message : 'Failed to fetch data');
@@ -52,6 +69,10 @@ export default function EmailDashboard() {
 
     fetchData();
   }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const addNewLabel = async () => {
     if (!newLabelName.trim()) return;
@@ -147,169 +168,82 @@ export default function EmailDashboard() {
     }
   };
 
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputMessage.trim()) return;
+
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: inputMessage,
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage('');
+
+    // TODO: Add AI response processing here
+    // For now, just echo back
+    const aiMessage: ChatMessage = {
+      role: 'assistant',
+      content: 'I received your message. AI response processing will be implemented soon.',
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, aiMessage]);
+  };
+
   return (
-    <div className="min-h-screen bg-white">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <h1 className="text-3xl font-semibold text-black mb-8">Friday Email Assistant</h1>
+    <div className="min-h-screen bg-black text-white">
+      <div className="max-w-4xl mx-auto px-4 py-6 flex flex-col h-screen">
+        <h1 className="text-2xl font-semibold mb-8 text-center">Friday Email Assistant</h1>
         
-        <div className="flex gap-6">
-          {/* Left Sidebar */}
-          <div className="w-1/3 space-y-8">
-            {/* Labels Section */}
-            <div className="border-b border-gray-200 pb-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-medium text-black">Labels</h2>
-                <button
-                  onClick={() => setShowLabelInput(true)}
-                  className="text-sm text-gray-600 hover:text-black"
-                >
-                  + Add Label
-                </button>
-              </div>
-              
-              {showLabelInput && (
-                <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newLabelName}
-                      onChange={(e) => setNewLabelName(e.target.value)}
-                      placeholder="Label name"
-                      className="flex-1 px-3 py-1 border border-gray-200 rounded-lg text-sm"
-                      onKeyDown={(e) => e.key === 'Enter' && !isCreatingLabel && addNewLabel()}
-                      disabled={isCreatingLabel}
-                    />
-                    <button
-                      onClick={addNewLabel}
-                      disabled={isCreatingLabel}
-                      className={`px-3 py-1 rounded-lg text-sm ${
-                        isCreatingLabel
-                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                          : 'bg-black text-white hover:bg-gray-800'
-                      }`}
-                    >
-                      {isCreatingLabel ? 'Adding...' : 'Add'}
-                    </button>
-                  </div>
-                  {labelError && (
-                    <p className="text-sm text-red-600">{labelError}</p>
-                  )}
-                </div>
-              )}
-              
-              <div className="space-y-1">
-                {labels.map(label => (
-                  <div
-                    key={label.id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer"
-                  >
-                    <div className={`w-2 h-2 rounded-full ${label.color}`} />
-                    <span className="text-sm text-gray-700">{label.name}</span>
-                  </div>
-                ))}
+        {/* Chat Messages */}
+        <div className="flex-1 overflow-y-auto mb-6 space-y-4">
+          {messages.map((message, index) => (
+            <div
+              key={index}
+              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                  message.role === 'user'
+                    ? 'bg-white text-black'
+                    : 'bg-gray-800 text-white'
+                }`}
+              >
+                <p className="text-sm">{message.content}</p>
+                <p className="text-xs mt-1 opacity-50">
+                  {message.timestamp.toLocaleTimeString()}
+                </p>
               </div>
             </div>
-
-            {/* Inbox Section */}
-            <div>
-              <h2 className="text-lg font-medium text-black mb-4">Inbox</h2>
-              {loading ? (
-                <div className="text-gray-500">Loading emails...</div>
-              ) : error ? (
-                <div className="text-red-600">{error}</div>
-              ) : emails.length === 0 ? (
-                <div className="text-gray-500">No emails to display</div>
-              ) : (
-                <div className="space-y-1">
-                  {emails.map(email => (
-                    <div
-                      key={email.id}
-                      className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                        selectedEmail?.id === email.id 
-                          ? 'bg-gray-100' 
-                          : 'hover:bg-gray-50'
-                      }`}
-                      onClick={() => setSelectedEmail(email)}
-                    >
-                      <div className="font-medium text-black truncate">{email.from}</div>
-                      <div className="text-sm text-gray-600 truncate">{email.subject}</div>
-                      <div className="mt-1 flex items-center gap-2">
-                        {email.category && (
-                          <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                            email.category === EmailCategory.URGENT
-                              ? 'border-red-200 text-red-800 bg-red-50'
-                              : email.category === EmailCategory.IMPORTANT
-                              ? 'border-yellow-200 text-yellow-800 bg-yellow-50'
-                              : 'border-gray-200 text-gray-600 bg-gray-50'
-                          }`}>
-                            {email.category}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Main Content - Email View */}
-          <div className="w-2/3">
-            {selectedEmail ? (
-              <div className="space-y-6">
-                <div className="border-b border-gray-200 pb-4">
-                  <div className="flex justify-between items-start mb-2">
-                    <h2 className="text-xl font-semibold text-black">{selectedEmail.subject}</h2>
-                    <div className="flex gap-2">
-                      {labels.map(label => (
-                        <button
-                          key={label.id}
-                          onClick={() => toggleEmailLabel(selectedEmail.id, label)}
-                          className={`text-xs px-2 py-1 rounded-full border border-gray-200 ${
-                            selectedEmail.labels.some(l => l.id === label.id)
-                              ? label.color
-                              : 'bg-white'
-                          } hover:opacity-80`}
-                        >
-                          {label.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="text-sm text-gray-600">From: {selectedEmail.from}</div>
-                </div>
-                
-                {selectedEmail.aiSummary && (
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <h3 className="font-medium text-black mb-2">AI Analysis</h3>
-                    <p className="text-gray-700">{selectedEmail.aiSummary}</p>
-                  </div>
-                )}
-                
-                <div className="prose max-w-none">
-                  <div className="text-gray-800 whitespace-pre-wrap">{selectedEmail.body}</div>
-                </div>
-                
-                {selectedEmail.suggestedResponse && (
-                  <div className="border border-gray-200 rounded-lg p-4 bg-white">
-                    <h3 className="font-medium text-black mb-2">Suggested Response</h3>
-                    <p className="text-gray-700 mb-4">{selectedEmail.suggestedResponse}</p>
-                    <button 
-                      className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors"
-                      onClick={() => {/* Implement send response */}}
-                    >
-                      Send Response
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="h-full flex items-center justify-center text-gray-500">
-                Select an email to view details
-              </div>
-            )}
-          </div>
+          ))}
+          <div ref={messagesEndRef} />
         </div>
+
+        {/* Input Form */}
+        <form onSubmit={handleSendMessage} className="flex gap-2">
+          <input
+            type="text"
+            value={inputMessage}
+            onChange={(e) => setInputMessage(e.target.value)}
+            placeholder="Ask about your emails..."
+            className="flex-1 bg-gray-800 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-white"
+          />
+          <button
+            type="submit"
+            className="px-6 py-2 bg-white text-black rounded-lg hover:bg-gray-200 transition-colors"
+          >
+            Send
+          </button>
+        </form>
+
+        {/* Loading State */}
+        {loading && (
+          <div className="fixed top-4 right-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+          </div>
+        )}
       </div>
     </div>
   );

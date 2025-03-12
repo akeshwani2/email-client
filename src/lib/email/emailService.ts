@@ -583,7 +583,25 @@ export class EmailService {
             await this.addLabelToEmail(account, email.id, investorLabel.gmailLabelId);
             console.log('Applied "Investor Email" label');
             email.labels = [...email.labels, investorLabel];
-            shouldCreateDraft = true;
+            
+            // Generate a complete AI response for investor emails
+            try {
+              // Make sure we get a complete response from the AI
+              const aiResponse = await this.emailAnalyzer.generateInvestorResponse(email);
+              
+              if (aiResponse && aiResponse.trim()) {
+                const draftId = await this.sendEmail({
+                  from: account.email,
+                  to: [email.from],
+                  subject: `Re: ${email.subject}`,
+                  body: aiResponse,
+                  threadId: email.threadId
+                }, account);
+                console.log('Created AI-generated investor response draft:', draftId);
+              }
+            } catch (error) {
+              console.error('Error generating AI response for investor email:', error);
+            }
           }
         }
 
@@ -674,41 +692,30 @@ export class EmailService {
 
   // Helper method to identify investor emails
   private isInvestorEmail(email: Email): boolean {
-    const investorIndicators = [
-      // Investment-related keywords
+    // Core investment keywords that must be present in subject or body
+    const coreInvestorKeywords = [
       /investor/i,
       /investment/i,
       /funding/i,
-      /venture/i,
-      /capital/i,
-      /term sheet/i,
-      /valuation/i,
-      /cap table/i,
-      /pitch/i,
-      /portfolio/i,
-      /equity/i,
-      /shares/i,
-      /stock/i,
-      /series [a-z]/i,
-      /round/i,
-      /vc/i,
       /venture capital/i,
-      
-      // Common VC domains
-      /sequoia/i,
-      /accel/i,
-      /benchmark/i,
-      /andreessen/i,
-      /a16z/i,
-      /firstround/i,
-      /greylock/i
+      /term sheet/i,
+      /cap table/i,
+      /valuation/i,
+      /series [a-z]/i,
+      /equity/i,
+      /financing/i,
+      /capital raise/i,
+      /seed round/i
     ];
 
-    return investorIndicators.some(pattern => 
+    // Check if any core keywords are in the subject or body (not just from address)
+    const hasInvestmentContent = coreInvestorKeywords.some(pattern => 
       pattern.test(email.subject) || 
-      pattern.test(email.body) ||
-      pattern.test(email.from)
+      pattern.test(email.body)
     );
+
+    // Only return true if the email explicitly mentions investment terms
+    return hasInvestmentContent;
   }
 
   // Helper method to identify action needed emails
